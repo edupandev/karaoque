@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KARAOKÊ — Pedir música</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="m">
+<section id="login">
+  <h1 class="neon">KARAOKÊ</h1>
+  <form id="loginForm" class="card">
+    <label for="room">Código da sala</label>
+    <input id="room" required maxlength="12" autocapitalize="characters">
+    <label for="name">Seu nome ou apelido</label>
+    <input id="name" required maxlength="20" placeholder="Ex: Maria">
+    <button>Entrar na sala</button>
+  </form>
+</section>
+
+<section id="app" hidden>
+  <div class="top"><h1 class="neon small">KARAOKÊ</h1><span id="who"></span></div>
+
+  <div id="tabSearch">
+    <form id="searchForm" class="search">
+      <input id="q" placeholder="Música, artista ou link do YouTube" enterkeyhint="search">
+      <button>Buscar</button>
+    </form>
+    <div id="results"><p class="msg">Digite o nome de uma música para buscar.</p></div>
+  </div>
+
+  <div id="tabQueue" hidden>
+    <div id="queue"></div>
+  </div>
+
+  <div id="tabControl" hidden>
+    <div class="card"><small class="tag">Tocando agora</small><p id="ctlNow"></p></div>
+    <div class="remote">
+      <button id="btnPlay" class="wide">⏸ Pausar</button>
+      <button id="btnRestart">↺ Recomeçar</button>
+      <button id="btnSkip">⏭ Pular</button>
+      <button id="btnVolDown">🔉 Volume −</button>
+      <button id="btnVolUp">🔊 Volume +</button>
+    </div>
+  </div>
+
+  <div id="tabReact" hidden>
+    <div class="card"><b>Anime a festa na TV</b>
+      <div class="react-grid">
+        <button data-react="clap">👏<small>Aplausos</small></button>
+        <button data-react="fire">🔥<small>Pegando fogo</small></button>
+        <button data-react="love">💖<small>Amei</small></button>
+        <button data-react="sing">🎤<small>Solta a voz</small></button>
+        <button data-react="cheers">🍻<small>Tim-tim</small></button>
+        <button data-react="party">🎉<small>Festa</small></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tabMic" hidden>
+    <div class="card">
+      <b>Microfone na TV</b>
+      <p class="msg" id="micInfo">Sua voz sai nas caixas da TV. Fale perto do celular e fique longe das caixas para não dar microfonia.</p>
+      <button id="btnMic" class="wide-btn">🎙️ Ativar microfone</button>
+      <label>Efeito na voz</label>
+      <div class="chips">
+        <button class="chip on" data-fx="none">Normal</button>
+        <button class="chip" data-fx="reverb">Reverb</button>
+        <button class="chip" data-fx="echo">Eco</button>
+        <button class="chip" data-fx="robot">Robô</button>
+        <button class="chip" data-fx="radio">Rádio</button>
+      </div>
+      <label for="fxAmount">Intensidade do efeito</label>
+      <input id="fxAmount" type="range" min="0" max="100" value="50">
+      <label class="check"><input type="checkbox" id="nsToggle" checked> Supressão de ruído</label>
+      <label for="gateLevel">Corte de ruído de fundo</label>
+      <input id="gateLevel" type="range" min="0" max="100" value="40">
+      <label for="micGain">Volume do microfone</label>
+      <input id="micGain" type="range" min="0" max="200" value="100">
+    </div>
+  </div>
+
+  <nav>
+    <button id="navSearch" class="on">Buscar</button>
+    <button id="navQueue">Fila</button>
+    <button id="navControl">Controle</button>
+    <button id="navMic">Mic</button>
+    <button id="navReact">Reagir</button>
+  </nav>
+</section>
+<div id="toast" class="m hidden"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const safe = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch { return null; } };
+
+const uid = safe('kuid') || (Math.random().toString(36).slice(2) + Date.now().toString(36));
+safe('kuid', uid);
+$('room').value = (new URLSearchParams(location.search).get('room') || '').toUpperCase();
+$('name').value = safe('kname') || '';
+
+let socket, room, name, state = { queue: [], current: null }, results = [];
+
+$('loginForm').onsubmit = e => {
+  e.preventDefault();
+  room = $('room').value.trim().toUpperCase(); name = $('name').value.trim();
+  safe('kname', name);
+  $('login').hidden = true; $('app').hidden = false;
+  $('who').textContent = `${name} · ${room}`;
+  socket = io();
+  socket.on('connect', () => socket.emit('room:join', { roomId: room, name, uid }));
+  socket.on('state', s => { state = s; renderQueue(); renderControl(); });
+  socket.on('mic:signal', onMicSignal);
+};
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
+
+function tab(which) {
+  ['Search', 'Queue', 'Control', 'Mic', 'React'].forEach(n => {
+    const on = which === n.toLowerCase();
+    $('tab' + n).hidden = !on; $('nav' + n).classList.toggle('on', on);
+  });
+}
+$('navSearch').onclick = () => tab('search');
+$('navQueue').onclick = () => tab('queue');
+$('navControl').onclick = () => tab('control');
+$('navMic').onclick = () => tab('mic');
+$('navReact').onclick = () => tab('react');
+
+// Busca: link do YouTube entra direto; texto vai para o servidor
+const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
+$('searchForm').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('q').value.trim(); if (!text) return;
+  const m = text.match(LINK);
+  if (m) {
+    results = [{ videoId: m[1], title: 'Vídeo do YouTube', channel: 'Link direto', thumb: `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg` }];
+    return renderResults();
+  }
+  $('results').innerHTML = '<p class="msg">Buscando...</p>';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(text));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro na busca');
+    results = d.results;
+    renderResults();
+  } catch (err) {
+    $('results').innerHTML = `<p class="msg">${esc(err.message)} Cole o link do vídeo na busca como alternativa.</p>`;
+  }
+};
+
+function renderResults() {
+  $('results').innerHTML = results.length ? results.map((s, i) => `
+    <div class="card item"><img src="${esc(s.thumb)}" alt="">
+      <div><b>${esc(s.title)}</b><small>${esc(s.channel)}</small></div>
+      <button data-add="${i}">+ Fila</button></div>`).join('')
+    : '<p class="msg">Nenhum vídeo liberado para tocar fora do YouTube. Tente outro termo.</p>';
+}
+$('results').onclick = e => {
+  const i = e.target.dataset.add; if (i === undefined) return;
+  socket.emit('queue:add', { song: results[i] });
+  toast('Música enviada para a fila!'); tab('queue');
+};
+
+function renderQueue() {
+  if (!$('queue')) return;
+  const c = state.current;
+  let html = c ? `<div class="card item"><div><small class="tag">Tocando agora</small><b>${esc(c.title)}</b><small>🎤 ${esc(c.singer)}</small></div></div>` : '';
+  if (c) html += '<button class="wide-btn" style="margin:0 0 12px" data-skip="1">⏭ Próxima música</button>';
+  html += state.queue.map((s, i) => {
+    const mine = s.uid === uid;
+    return `<div class="card item ${mine ? 'mine' : ''}"><div>
+      ${mine && i === 0 ? '<small class="tag">Você é a próxima!</small>' : ''}
+      <b>${i + 1}. ${esc(s.title)}</b><small>🎤 ${esc(s.singer)}</small></div>
+      ${mine ? `<button data-rm="${esc(s.id)}">Remover</button>` : ''}</div>`;
+  }).join('');
+  $('queue').innerHTML = html || '<p class="msg">A fila está vazia. Busque uma música e seja o primeiro!</p>';
+}
+$('queue').onclick = e => {
+  const id = e.target.dataset.rm;
+  if (id) socket.emit('queue:remove', { songId: id });
+  if (e.target.dataset.skip && confirm('Pular a música atual?')) send('skip');
+};
+// ----- Controle remoto da TV -----
+const send = (action, value) => socket.emit('playback:control', { action, value });
+$('btnPlay').onclick = () => send(state.playing ? 'pause' : 'play');
+$('btnRestart').onclick = () => send('restart');
+$('btnSkip').onclick = () => { if (confirm('Pular a música atual?')) send('skip'); };
+$('btnVolDown').onclick = () => send('volume', -10);
+$('btnVolUp').onclick = () => send('volume', 10);
+function renderControl() {
+  const c = state.current;
+  $('ctlNow').textContent = c ? `${c.title} (${c.singer})` : 'Nada tocando no momento.';
+  $('btnPlay').textContent = state.playing ? '⏸ Pausar' : '▶ Tocar';
+  document.querySelectorAll('#tabControl button').forEach(b => b.disabled = !c);
+}
+renderControl();
+
+// ----- Microfone: sua voz vai direto para a TV (WebRTC) -----
+let micPc = null, micRaw = null, micCtx = null, micGain = null, wake = null;
+function setMic(on, info) {
+  $('btnMic').textContent = on ? '⏹ Desligar microfone' : '🎙️ Ativar microfone';
+  $('btnMic').classList.toggle('live', on);
+  if (info) $('micInfo').textContent = info;
+}
+function stopMic(notify = true) {
+  if (notify && socket) socket.emit('mic:stop');
+  if (micPc) { micPc.close(); micPc = null; }
+  if (micRaw) { micRaw.getTracks().forEach(t => t.stop()); micRaw = null; }
+  clearInterval(gateTimer); gateTimer = null;
+  if (micCtx) { micCtx.close(); micCtx = null; }
+  if (wake) { wake.release().catch(() => {}); wake = null; }
+  setMic(false);
+}
+async function startMic() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    return setMic(false, 'O microfone só funciona em páginas HTTPS. Abra o endereço https:// do site.');
+  }
+  try {
+    micRaw = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: $('nsToggle').checked, autoGainControl: false, channelCount: 1 } });
+  } catch { return setMic(false, 'Permissão negada. Libere o microfone nas configurações do navegador e tente de novo.'); }
+  micCtx = new AudioContext(); await micCtx.resume();
+  const dest = micCtx.createMediaStreamDestination();
+  buildGraph(dest);
+  micPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  dest.stream.getAudioTracks().forEach(t => micPc.addTrack(t, dest.stream));
+  micPc.onicecandidate = e => { if (e.candidate) socket.emit('mic:signal', { data: { candidate: e.candidate } }); };
+  micPc.onconnectionstatechange = () => {
+    const st = micPc && micPc.connectionState;
+    if (st === 'connected') setMic(true, 'Ao vivo! Sua voz está saindo na TV.');
+    if (st === 'failed') { stopMic(false); setMic(false, 'Não foi possível conectar com a TV. Confira se ela está aberta e tente de novo.'); }
+  };
+  setMic(true, 'Conectando com a TV...');
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  await micPc.setLocalDescription(await micPc.createOffer());
+  socket.emit('mic:signal', { data: { description: micPc.localDescription } });
+}
+function onMicSignal({ data }) {
+  if (!micPc || !data) return;
+  if (data.description) micPc.setRemoteDescription(data.description).catch(() => {});
+  if (data.candidate) micPc.addIceCandidate(data.candidate).catch(() => {});
+}
+// Cadeia: microfone > filtro de graves > porta de ruído > (seco + efeito) > volume > TV
+let fx = 'none', gateTimer = null, graph = {};
+function makeIR(c) {
+  const len = c.sampleRate * 2.2, buf = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5); }
+  return buf;
+}
+function buildGraph(dest) {
+  const c = micCtx;
+  const src = c.createMediaStreamSource(micRaw);
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+  const an = c.createAnalyser(); an.fftSize = 1024;
+  const gate = c.createGain(), dry = c.createGain(), wetIn = c.createGain(), wet = c.createGain();
+  micGain = c.createGain(); micGain.gain.value = $('micGain').value / 100;
+  src.connect(hp); hp.connect(an); hp.connect(gate);
+  gate.connect(dry); gate.connect(wetIn);
+  dry.connect(micGain); wet.connect(micGain); micGain.connect(dest);
+  graph = { c, an, gate, dry, wetIn, wet, nodes: [] };
+  setEffect(fx); startGate();
+}
+function applyMix() {
+  if (!micCtx) return;
+  const amt = $('fxAmount').value / 100, crossfade = fx === 'robot' || fx === 'radio';
+  graph.wet.gain.value = fx === 'none' ? 0 : amt * (fx === 'reverb' ? 1.6 : 1);
+  graph.dry.gain.value = crossfade ? 1 - amt : 1;
+}
+function setEffect(name) {
+  fx = name;
+  document.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.fx === name));
+  if (!micCtx) return;
+  const { c, wetIn, wet } = graph;
+  wetIn.disconnect();
+  graph.nodes.forEach(n => { try { n.disconnect(); if (n.stop) n.stop(); } catch {} });
+  graph.nodes = [];
+  let out = null;
+  if (name === 'reverb') {
+    const cv = c.createConvolver(); cv.buffer = makeIR(c); wetIn.connect(cv); out = cv; graph.nodes.push(cv);
+  } else if (name === 'echo') {
+    const d = c.createDelay(1), fb = c.createGain(); d.delayTime.value = 0.3; fb.gain.value = 0.4;
+    wetIn.connect(d); d.connect(fb); fb.connect(d); out = d; graph.nodes.push(d, fb);
+  } else if (name === 'robot') {
+    const m = c.createGain(), o = c.createOscillator(); m.gain.value = 0; o.frequency.value = 55;
+    o.connect(m.gain); o.start(); wetIn.connect(m); out = m; graph.nodes.push(m, o);
+  } else if (name === 'radio') {
+    const h = c.createBiquadFilter(), l = c.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = 500; l.type = 'lowpass'; l.frequency.value = 3200;
+    wetIn.connect(h); h.connect(l); out = l; graph.nodes.push(h, l);
+  }
+  if (out) out.connect(wet);
+  applyMix();
+}
+// Porta de ruído: silencia o microfone quando só há barulho de fundo (e reduz o eco da música)
+function startGate() {
+  const buf = new Float32Array(graph.an.fftSize); let lastLoud = 0;
+  gateTimer = setInterval(() => {
+    const { gate, an, c } = graph;
+    if (!$('nsToggle').checked) return gate.gain.setTargetAtTime(1, c.currentTime, 0.02);
+    an.getFloatTimeDomainData(buf);
+    let s = 0; for (const v of buf) s += v * v;
+    const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9);
+    const limit = -70 + $('gateLevel').value * 0.4;
+    const now = performance.now();
+    if (db > limit) lastLoud = now;
+    const open = now - lastLoud < 250;
+    gate.gain.setTargetAtTime(open ? 1 : 0, c.currentTime, open ? 0.01 : 0.1);
+  }, 40);
+}
+document.querySelectorAll('.chip').forEach(b => b.onclick = () => setEffect(b.dataset.fx));
+$('fxAmount').oninput = applyMix;
+$('nsToggle').onchange = e => {
+  const t = micRaw && micRaw.getAudioTracks()[0];
+  if (t) t.applyConstraints({ noiseSuppression: e.target.checked, echoCancellation: true }).catch(() => {});
+};
+$('btnMic').onclick = () => (micPc ? stopMic() : startMic());
+$('micGain').oninput = e => { if (micGain) micGain.gain.value = e.target.value / 100; };
+// ----- Reações -----
+document.querySelectorAll('[data-react]').forEach(b => b.onclick = () => socket.emit('reaction:send', { type: b.dataset.react }));
+</script>
+</body>
+</html>

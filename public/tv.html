@@ -55,6 +55,19 @@ socket.on('state', s => { state = s; render(); });
 const next = () => socket.emit('playback:next');
 $('skip').onclick = next;
 
+// Comandos vindos do celular
+socket.on('control', ({ action, value }) => {
+  if (!player || !player.getPlayerState) return;
+  if (action === 'pause') player.pauseVideo();
+  if (action === 'play') player.playVideo();
+  if (action === 'restart') { player.seekTo(0, true); player.playVideo(); }
+  if (action === 'volume') {
+    player.unMute();
+    const v = Math.max(0, Math.min(100, player.getVolume() + value));
+    player.setVolume(v); toast('Volume: ' + v + '%');
+  }
+});
+
 let state = { queue: [], current: null }, started = false, lastId = null;
 let player = null, apiReady = false, pending = null;
 
@@ -73,7 +86,11 @@ function play(c) {
       playerVars: { autoplay: 1, rel: 0, playsinline: 1, origin: location.origin },
       events: {
         onReady: e => e.target.playVideo(),
-        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) next(); },
+        onStateChange: e => {
+          if (e.data === YT.PlayerState.ENDED) next();
+          if (e.data === YT.PlayerState.PLAYING) socket.emit('playback:status', { playing: true });
+          if (e.data === YT.PlayerState.PAUSED) socket.emit('playback:status', { playing: false });
+        },
         onError: e => { toast(`Vídeo bloqueado (erro ${e.data}). Pulando...`); next(); },
       },
     });

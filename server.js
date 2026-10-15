@@ -49,9 +49,11 @@ app.get('/api/search', async (req, res) => {
 });
 
 // ---------- Salas e fila em tempo real ----------
-const rooms = new Map(); // roomId -> { queue: [], current: null }
-const getRoom = id => rooms.get(id) || rooms.set(id, { queue: [], current: null }).get(id);
-const publish = id => { const r = getRoom(id); io.to(id).emit('state', { queue: r.queue, current: r.current }); };
+const rooms = new Map(); // roomId -> { queue: [], current: null, playing: false }
+const getRoom = id => rooms.get(id) || rooms.set(id, { queue: [], current: null, playing: false }).get(id);
+const stateOf = r => ({ queue: r.queue, current: r.current, playing: r.playing });
+const publish = id => io.to(id).emit('state', stateOf(getRoom(id)));
+const advance = id => { const r = getRoom(id); r.current = r.queue.shift() || null; if (!r.current) r.playing = false; publish(id); };
 
 io.on('connection', socket => {
   socket.on('room:join', ({ roomId, name, uid, isHost }) => {
@@ -60,7 +62,7 @@ io.on('connection', socket => {
     socket.data = { roomId, name: String(name || 'Convidado').slice(0, 20), uid: String(uid || socket.id), isHost: !!isHost };
     socket.join(roomId);
     const r = getRoom(roomId);
-    socket.emit('state', { queue: r.queue, current: r.current });
+    socket.emit('state', stateOf(r));
   });
 
   socket.on('queue:add', ({ song } = {}) => {
@@ -91,8 +93,22 @@ io.on('connection', socket => {
   socket.on('playback:next', () => {
     const { roomId, isHost } = socket.data || {};
     if (!roomId || !isHost) return;
-    const r = getRoom(roomId);
-    r.current = r.queue.shift() || null;
+    advance(roomId);
+  });
+
+  // Controle remoto: qualquer convidado manda o comando e a TV executa
+  socket.on('playback:control', ({ action, value } = {}) => {
+    const { roomId } = socket.data || {};
+    if (!roomId || !['play', 'pause', 'restart', 'skip', 'volume'].includes(action)) return;
+    if (action === 'skip') return advance(roomId);
+    io.to(roomId).emit('control', { action, value: Number(value) || 0 });
+  });
+
+  // A TV informa se o vídeo está tocando ou pausado
+  socket.on('playback:status', ({ playing } = {}) => {
+    const { roomId, isHost } = socket.data || {};
+    if (!roomId || !isHost) return;
+    getRoom(roomId).playing = !!playing;
     publish(roomId);
   });
 

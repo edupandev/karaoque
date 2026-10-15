@@ -33,9 +33,21 @@
     <div id="queue"></div>
   </div>
 
+  <div id="tabControl" hidden>
+    <div class="card"><small class="tag">Tocando agora</small><p id="ctlNow"></p></div>
+    <div class="remote">
+      <button id="btnPlay" class="wide">⏸ Pausar</button>
+      <button id="btnRestart">↺ Recomeçar</button>
+      <button id="btnSkip">⏭ Pular</button>
+      <button id="btnVolDown">🔉 Volume −</button>
+      <button id="btnVolUp">🔊 Volume +</button>
+    </div>
+  </div>
+
   <nav>
     <button id="navSearch" class="on">Buscar</button>
     <button id="navQueue">Fila</button>
+    <button id="navControl">Controle</button>
   </nav>
 </section>
 <div id="toast" class="m hidden"></div>
@@ -61,17 +73,20 @@ $('loginForm').onsubmit = e => {
   $('who').textContent = `${name} · ${room}`;
   socket = io();
   socket.on('connect', () => socket.emit('room:join', { roomId: room, name, uid }));
-  socket.on('state', s => { state = s; renderQueue(); });
+  socket.on('state', s => { state = s; renderQueue(); renderControl(); });
 };
 
 function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
 
 function tab(which) {
-  $('tabSearch').hidden = which !== 'search'; $('tabQueue').hidden = which !== 'queue';
-  $('navSearch').classList.toggle('on', which === 'search'); $('navQueue').classList.toggle('on', which === 'queue');
+  ['Search', 'Queue', 'Control'].forEach(n => {
+    const on = which === n.toLowerCase();
+    $('tab' + n).hidden = !on; $('nav' + n).classList.toggle('on', on);
+  });
 }
 $('navSearch').onclick = () => tab('search');
 $('navQueue').onclick = () => tab('queue');
+$('navControl').onclick = () => tab('control');
 
 // Busca: link do YouTube entra direto; texto vai para o servidor
 const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
@@ -122,6 +137,20 @@ function renderQueue() {
   $('queue').innerHTML = html || '<p class="msg">A fila está vazia. Busque uma música e seja o primeiro!</p>';
 }
 $('queue').onclick = e => { const id = e.target.dataset.rm; if (id) socket.emit('queue:remove', { songId: id }); };
+// ----- Controle remoto da TV -----
+const send = (action, value) => socket.emit('playback:control', { action, value });
+$('btnPlay').onclick = () => send(state.playing ? 'pause' : 'play');
+$('btnRestart').onclick = () => send('restart');
+$('btnSkip').onclick = () => { if (confirm('Pular a música atual?')) send('skip'); };
+$('btnVolDown').onclick = () => send('volume', -10);
+$('btnVolUp').onclick = () => send('volume', 10);
+function renderControl() {
+  const c = state.current;
+  $('ctlNow').textContent = c ? `${c.title} (${c.singer})` : 'Nada tocando no momento.';
+  $('btnPlay').textContent = state.playing ? '⏸ Pausar' : '▶ Tocar';
+  document.querySelectorAll('#tabControl button').forEach(b => b.disabled = !c);
+}
+renderControl();
 </script>
 </body>
 </html>

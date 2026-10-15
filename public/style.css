@@ -94,3 +94,34 @@ input[type=range]{padding:0}
 .react-grid small{font-size:12px;color:#9a8fb8}
 .react-grid button:active{transform:scale(.94)}
 nav button{padding:16px 4px;font-size:14px}
+
+/* Modo PC e menu inicial */
+body.pc{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body.pc header{display:flex;align-items:center;gap:14px;padding:8px 16px;background:#0f0a20;border-bottom:1px solid #3a2a63}
+body.pc header .grow{flex:1}
+body.pc header input{width:160px;padding:8px}
+body.pc header button{padding:.5em 1em;font-size:14px}
+body.pc header b{color:#00e5ff;letter-spacing:.2em}
+body.pc .neon.small{font-size:26px}
+body.pc main{flex:1;display:grid;grid-template-columns:1fr 440px;min-height:0}
+body.pc iframe{border:0;width:100%;height:100%;display:block}
+#tvWrap{min-width:0;min-height:0;position:relative}
+#tvMoved{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+body.pc #ctl{border-left:1px solid #3a2a63}
+.menu{display:flex;flex-direction:column;gap:12px}
+.menu a{text-decoration:none}
+.menu button{width:100%;font-size:18px;padding:18px}
+
+/* Modo DJ e hub */
+body:not(.is-host) .host-only{display:none!important}
+body.is-host .guest-only{display:none!important}
+.player{aspect-ratio:16/9;background:#000;border:2px solid #ff2bd6;border-radius:12px;overflow:hidden;margin-bottom:10px}
+.player iframe{width:100%;height:100%;display:block}
+.ctl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 0}
+.ctl .wide{grid-column:1/-1}
+.ctl button{padding:14px 6px;font-size:16px}
+.ctl button:disabled{opacity:.4}
+#qrBox{background:#fff;padding:10px;border-radius:12px;display:inline-block;line-height:0;margin:10px 0}
+.center{text-align:center}
+.bigpin{font-size:34px;font-weight:900;color:#00e5ff;letter-spacing:.3em;text-shadow:0 0 12px #00e5ff}
+.menu h2{margin:10px 0 0;color:#00e5ff;font-size:16px}

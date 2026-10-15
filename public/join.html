@@ -100,6 +100,11 @@ const uid = safe('kuid') || (Math.random().toString(36).slice(2) + Date.now().to
 safe('kuid', uid);
 $('room').value = (new URLSearchParams(location.search).get('room') || '').toUpperCase();
 $('name').value = safe('kname') || '';
+{
+  const p = new URLSearchParams(location.search);
+  if (p.get('name')) $('name').value = p.get('name');
+  if (p.get('auto') && $('room').value && $('name').value) setTimeout(() => $('loginForm').requestSubmit(), 0);
+}
 
 let socket, room, name, state = { queue: [], current: null }, results = [];
 

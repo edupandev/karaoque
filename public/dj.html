@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DJ — Hub da Festa</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="m">
+<section id="login">
+  <h1 class="neon">DJ</h1>
+  <form id="loginForm" class="card">
+    <label for="room">Código da sala</label>
+    <input id="room" required maxlength="12" autocapitalize="characters">
+    <label for="name">Seu nome ou apelido</label>
+    <input id="name" required maxlength="20" placeholder="Ex: DJ Maria">
+    <button id="loginBtn">Entrar na sala</button>
+  </form>
+  <p class="msg" id="hostHint"></p>
+</section>
+
+<section id="app" hidden>
+  <div class="top"><h1 class="neon small">DJ</h1><span id="who"></span></div>
+
+  <div class="host-only">
+    <div class="player"><div id="player"></div></div>
+    <div class="card" style="margin-bottom:12px">
+      <small class="tag">Tocando agora</small>
+      <p id="hostNow"></p>
+      <div class="ctl">
+        <button data-act="toggle" class="wide">▶ Tocar</button>
+        <button data-act="restart">↺ Recomeçar</button>
+        <button data-act="skip">⏭ Pular</button>
+        <button data-act="vold">🔉 Volume −</button>
+        <button data-act="volu">🔊 Volume +</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tabSearch">
+    <form id="searchForm" class="search">
+      <input id="q" placeholder="Música, artista ou link do YouTube" enterkeyhint="search">
+      <button>Buscar</button>
+    </form>
+    <div id="results"><p class="msg">Digite o nome de uma música para buscar.</p></div>
+  </div>
+
+  <div id="tabQueue" hidden><div id="queue"></div></div>
+
+  <div id="tabControl" hidden class="guest-only">
+    <div class="card">
+      <small class="tag">Tocando agora</small>
+      <p id="ctlNow"></p>
+      <div class="ctl">
+        <button data-act="toggle" class="wide">▶ Tocar</button>
+        <button data-act="restart">↺ Recomeçar</button>
+        <button data-act="skip">⏭ Pular</button>
+        <button data-act="vold">🔉 Volume −</button>
+        <button data-act="volu">🔊 Volume +</button>
+      </div>
+      <p class="msg" id="ctlMsg"></p>
+    </div>
+  </div>
+
+  <div id="tabShare" hidden class="host-only">
+    <div class="card center">
+      <b>Convide a galera</b>
+      <p class="msg">Escaneie o QR Code ou use o código da sala.</p>
+      <div id="qrBox"></div>
+      <div class="bigpin" id="pin"></div>
+      <button id="btnCopy" class="wide-btn">Copiar link da sala</button>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <label class="check"><input type="checkbox" id="allowCtl" checked> Convidados podem pausar, pular e mudar o volume</label>
+    </div>
+  </div>
+
+  <nav>
+    <button id="navSearch" class="on">Buscar</button>
+    <button id="navQueue">Fila</button>
+    <button id="navControl" class="guest-only">Controle</button>
+    <button id="navShare" class="host-only">Convidar</button>
+  </nav>
+</section>
+<div id="toast" class="m hidden"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const safe = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch { return null; } };
+const rnd = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const p = new URLSearchParams(location.search);
+const isHost = p.get('host') === '1';
+let room = (p.get('room') || '').toUpperCase();
+if (isHost && !room) { room = Math.random().toString(36).slice(2, 6).toUpperCase(); history.replaceState(null, '', '?host=1&room=' + room); }
+const uid = safe('kuid') || rnd(); safe('kuid', uid);
+
+$('room').value = room; $('room').readOnly = isHost;
+$('name').value = safe('kname') || '';
+if (isHost) { $('loginBtn').textContent = 'Criar sala e começar'; $('hostHint').textContent = 'Você será o DJ: o som toca neste celular. Mantenha esta tela aberta e acesa.'; }
+
+let socket, name, hostKey, state = { queue: [], current: null, playing: false, allowControl: true }, results = [];
+
+$('loginForm').onsubmit = e => {
+  e.preventDefault();
+  room = $('room').value.trim().toUpperCase(); name = $('name').value.trim(); safe('kname', name);
+  if (isHost) { hostKey = safe('hk:' + room) || rnd(); safe('hk:' + room, hostKey); }
+  document.body.classList.add(isHost ? 'is-host' : 'is-guest');
+  $('login').hidden = true; $('app').hidden = false;
+  $('who').textContent = `${name} · ${room}`;
+  socket = io();
+  socket.on('connect', () => socket.emit('room:join', { roomId: room, name, uid, isHost, hostKey, mode: 'dj' }));
+  socket.on('state', s => { state = s; render(); });
+  socket.on('role', r => { if (isHost && !r.isHost) { alert('Esta sala já tem outro DJ.'); location.href = '/'; } });
+  if (isHost) { socket.on('control', onControl); loadYT(); keepAwake(); buildShare(); }
+};
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
+function tab(w) {
+  ['Search', 'Queue', 'Control', 'Share'].forEach(n => {
+    const on = w === n.toLowerCase();
+    $('tab' + n).hidden = !on; $('nav' + n).classList.toggle('on', on);
+  });
+}
+['Search', 'Queue', 'Control', 'Share'].forEach(n => $('nav' + n).onclick = () => tab(n.toLowerCase()));
+
+// ---------- Busca e fila ----------
+const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
+$('searchForm').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('q').value.trim(); if (!text) return;
+  const m = text.match(LINK);
+  if (m) { results = [{ videoId: m[1], title: 'Vídeo do YouTube', channel: 'Link direto', thumb: `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg` }]; return renderResults(); }
+  $('results').innerHTML = '<p class="msg">Buscando...</p>';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(text + ' audio'));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro na busca');
+    results = d.results; renderResults();
+  } catch (err) { $('results').innerHTML = `<p class="msg">${esc(err.message)} Cole o link do vídeo como alternativa.</p>`; }
+};
+function renderResults() {
+  $('results').innerHTML = results.length ? results.map((s, i) => `
+    <div class="card item"><img src="${esc(s.thumb)}" alt="">
+      <div><b>${esc(s.title)}</b><small>${esc(s.channel)}</small></div>
+      <button data-add="${i}">+ Fila</button></div>`).join('')
+    : '<p class="msg">Nenhum vídeo liberado para tocar fora do YouTube. Tente outro termo.</p>';
+}
+$('results').onclick = e => {
+  const i = e.target.dataset.add; if (i === undefined) return;
+  socket.emit('queue:add', { song: results[i] });
+  toast('Música enviada para a fila!'); tab('queue');
+};
+$('queue').onclick = e => { const id = e.target.dataset.rm; if (id) socket.emit('queue:remove', { songId: id }); };
+
+// ---------- Tela ----------
+function render() {
+  const c = state.current, locked = !isHost && !state.allowControl;
+  const now = c ? `${c.title} (${c.singer})` : 'Nada tocando no momento.';
+  $('hostNow').textContent = $('ctlNow').textContent = now;
+  let h = c ? `<div class="card item"><div><small class="tag">Tocando agora</small><b>${esc(c.title)}</b><small>🎧 ${esc(c.singer)}</small></div></div>` : '';
+  h += state.queue.map((s, i) => {
+    const mine = s.uid === uid;
+    return `<div class="card item ${mine ? 'mine' : ''}"><div>
+      ${mine && i === 0 ? '<small class="tag">Você é a próxima!</small>' : ''}
+      <b>${i + 1}. ${esc(s.title)}</b><small>🎧 ${esc(s.singer)}</small></div>
+      ${mine || isHost ? `<button data-rm="${esc(s.id)}">Remover</button>` : ''}</div>`;
+  }).join('');
+  $('queue').innerHTML = h || '<p class="msg">A fila está vazia. Busque uma música e seja o primeiro!</p>';
+  document.querySelectorAll('[data-act]').forEach(b => {
+    b.disabled = !c || locked;
+    if (b.dataset.act === 'toggle') b.textContent = state.playing ? '⏸ Pausar' : '▶ Tocar';
+  });
+  $('ctlMsg').textContent = locked ? 'O DJ desativou o controle dos convidados.' : '';
+  if (isHost) { $('allowCtl').checked = state.allowControl; syncPlayer(); }
+}
+
+// ---------- Controles (convidados e dono) ----------
+const send = (action, value) => socket.emit('playback:control', { action, value });
+document.querySelectorAll('[data-act]').forEach(b => b.onclick = () => {
+  const a = b.dataset.act;
+  if (a === 'toggle') send(state.playing ? 'pause' : 'play');
+  if (a === 'restart') send('restart');
+  if (a === 'vold') send('volume', -10);
+  if (a === 'volu') send('volume', 10);
+  if (a === 'skip' && (isHost || confirm('Pular a música atual?'))) send('skip');
+});
+
+// ---------- Só o dono: player, tela acesa e convite ----------
+let player = null, playerReady = false, lastId = null, wake = null;
+async function keepAwake() { try { wake = await navigator.wakeLock?.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => { if (isHost && document.visibilityState === 'visible' && socket) keepAwake(); });
+
+function loadYT() {
+  window.onYouTubeIframeAPIReady = () => {
+    player = new YT.Player('player', {
+      width: '100%', height: '100%',
+      playerVars: { playsinline: 1, rel: 0, origin: location.origin },
+      events: {
+        onReady: () => { playerReady = true; syncPlayer(); },
+        onStateChange: e => {
+          if (e.data === YT.PlayerState.ENDED) socket.emit('playback:next');
+          if (e.data === YT.PlayerState.PLAYING) socket.emit('playback:status', { playing: true });
+          if (e.data === YT.PlayerState.PAUSED) socket.emit('playback:status', { playing: false });
+        },
+        onError: e => { toast(`Vídeo bloqueado (erro ${e.data}). Pulando...`); socket.emit('playback:next'); },
+      },
+    });
+  };
+  const t = document.createElement('script'); t.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(t);
+}
+function syncPlayer() {
+  if (!playerReady) return;
+  const c = state.current;
+  if (!c) { lastId = null; player.stopVideo(); return; }
+  if (c.id !== lastId) { lastId = c.id; player.loadVideoById(c.videoId); }
+}
+function onControl({ action, value }) {
+  if (!playerReady) return;
+  if (action === 'pause') player.pauseVideo();
+  if (action === 'play') player.playVideo();
+  if (action === 'restart') { player.seekTo(0, true); player.playVideo(); }
+  if (action === 'volume') {
+    player.unMute();
+    const v = Math.max(0, Math.min(100, player.getVolume() + value));
+    player.setVolume(v); toast('Volume: ' + v + '%');
+  }
+}
+function buildShare() {
+  const url = `${location.origin}/dj?room=${room}`;
+  new QRCode($('qrBox'), { text: url, width: 200, height: 200 });
+  $('pin').textContent = room;
+  $('btnCopy').onclick = async () => {
+    try { await navigator.clipboard.writeText(url); toast('Link copiado!'); } catch { prompt('Copie o link:', url); }
+  };
+  $('allowCtl').onchange = e => socket.emit('room:settings', { allowControl: e.target.checked });
+}
+</script>
+</body>
+</html>

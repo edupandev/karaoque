@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KARAOKÊ — Modo PC</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="pc">
+<header>
+  <h1 class="neon small">KARAOKÊ</h1>
+  <span>Sala <b id="code"></b></span>
+  <span class="grow"></span>
+  <input id="name" maxlength="20" placeholder="Seu nome" title="Seu nome na sala">
+  <button id="btnFull">Tela cheia da TV</button>
+  <button id="btnPop">TV em outra janela</button>
+  <button id="btnCopy">Copiar link para convidados</button>
+</header>
+<main>
+  <div id="tvWrap">
+    <iframe id="tv" allow="autoplay; fullscreen; microphone"></iframe>
+    <div id="tvMoved" hidden><p>A TV está aberta em outra janela.</p><button id="btnBack">Trazer a TV de volta</button></div>
+  </div>
+  <iframe id="ctl" allow="autoplay; microphone"></iframe>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const q = new URLSearchParams(location.search);
+let room = (q.get('room') || '').toUpperCase();
+if (!room) { room = Math.random().toString(36).slice(2, 6).toUpperCase(); history.replaceState(null, '', '?room=' + room); }
+let name = 'PC';
+try { name = localStorage.getItem('kname') || 'PC'; } catch {}
+$('code').textContent = room; $('name').value = name;
+
+const tvUrl = `/tv?room=${room}`;
+const loadTv = () => { $('tv').hidden = false; $('tvMoved').hidden = true; $('tv').src = tvUrl; };
+const loadCtl = () => { $('ctl').src = `/join?room=${room}&auto=1&name=${encodeURIComponent(name)}`; };
+loadTv(); loadCtl();
+
+$('name').onchange = e => {
+  name = e.target.value.trim() || 'PC';
+  try { localStorage.setItem('kname', name); } catch {}
+  loadCtl();
+};
+$('btnFull').onclick = () => $('tv').requestFullscreen && $('tv').requestFullscreen();
+$('btnPop').onclick = () => { window.open(tvUrl, 'karaoke-tv', 'popup'); $('tv').src = 'about:blank'; $('tv').hidden = true; $('tvMoved').hidden = false; };
+$('btnBack').onclick = loadTv;
+$('btnCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText(`${location.origin}/join?room=${room}`); $('btnCopy').textContent = 'Link copiado!'; }
+  catch { prompt('Copie o link:', `${location.origin}/join?room=${room}`); }
+  setTimeout(() => { $('btnCopy').textContent = 'Copiar link para convidados'; }, 2500);
+};
+</script>
+</body>
+</html>

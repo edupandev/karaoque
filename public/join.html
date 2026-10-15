@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KARAOKÊ — Pedir música</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="m">
+<section id="login">
+  <h1 class="neon">KARAOKÊ</h1>
+  <form id="loginForm" class="card">
+    <label for="room">Código da sala</label>
+    <input id="room" required maxlength="12" autocapitalize="characters">
+    <label for="name">Seu nome ou apelido</label>
+    <input id="name" required maxlength="20" placeholder="Ex: Maria">
+    <button>Entrar na sala</button>
+  </form>
+</section>
+
+<section id="app" hidden>
+  <div class="top"><h1 class="neon small">KARAOKÊ</h1><span id="who"></span></div>
+
+  <div id="tabSearch">
+    <form id="searchForm" class="search">
+      <input id="q" placeholder="Música, artista ou link do YouTube" enterkeyhint="search">
+      <button>Buscar</button>
+    </form>
+    <div id="results"><p class="msg">Digite o nome de uma música para buscar.</p></div>
+  </div>
+
+  <div id="tabQueue" hidden>
+    <div id="queue"></div>
+  </div>
+
+  <nav>
+    <button id="navSearch" class="on">Buscar</button>
+    <button id="navQueue">Fila</button>
+  </nav>
+</section>
+<div id="toast" class="m hidden"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const safe = (k, v) => { try { return v === undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); } catch { return null; } };
+
+const uid = safe('kuid') || (Math.random().toString(36).slice(2) + Date.now().toString(36));
+safe('kuid', uid);
+$('room').value = (new URLSearchParams(location.search).get('room') || '').toUpperCase();
+$('name').value = safe('kname') || '';
+
+let socket, room, name, state = { queue: [], current: null }, results = [];
+
+$('loginForm').onsubmit = e => {
+  e.preventDefault();
+  room = $('room').value.trim().toUpperCase(); name = $('name').value.trim();
+  safe('kname', name);
+  $('login').hidden = true; $('app').hidden = false;
+  $('who').textContent = `${name} · ${room}`;
+  socket = io();
+  socket.on('connect', () => socket.emit('room:join', { roomId: room, name, uid }));
+  socket.on('state', s => { state = s; renderQueue(); });
+};
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
+
+function tab(which) {
+  $('tabSearch').hidden = which !== 'search'; $('tabQueue').hidden = which !== 'queue';
+  $('navSearch').classList.toggle('on', which === 'search'); $('navQueue').classList.toggle('on', which === 'queue');
+}
+$('navSearch').onclick = () => tab('search');
+$('navQueue').onclick = () => tab('queue');
+
+// Busca: link do YouTube entra direto; texto vai para o servidor
+const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
+$('searchForm').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('q').value.trim(); if (!text) return;
+  const m = text.match(LINK);
+  if (m) {
+    results = [{ videoId: m[1], title: 'Vídeo do YouTube', channel: 'Link direto', thumb: `https://img.youtube.com/vi/${m[1]}/mqdefault.jpg` }];
+    return renderResults();
+  }
+  $('results').innerHTML = '<p class="msg">Buscando...</p>';
+  try {
+    const r = await fetch('/api/search?q=' + encodeURIComponent(text));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Erro na busca');
+    results = d.results;
+    renderResults();
+  } catch (err) {
+    $('results').innerHTML = `<p class="msg">${esc(err.message)} Cole o link do vídeo na busca como alternativa.</p>`;
+  }
+};
+
+function renderResults() {
+  $('results').innerHTML = results.length ? results.map((s, i) => `
+    <div class="card item"><img src="${esc(s.thumb)}" alt="">
+      <div><b>${esc(s.title)}</b><small>${esc(s.channel)}</small></div>
+      <button data-add="${i}">+ Fila</button></div>`).join('')
+    : '<p class="msg">Nenhum vídeo liberado para tocar fora do YouTube. Tente outro termo.</p>';
+}
+$('results').onclick = e => {
+  const i = e.target.dataset.add; if (i === undefined) return;
+  socket.emit('queue:add', { song: results[i] });
+  toast('Música enviada para a fila!'); tab('queue');
+};
+
+function renderQueue() {
+  if (!$('queue')) return;
+  const c = state.current;
+  let html = c ? `<div class="card item"><div><small class="tag">Tocando agora</small><b>${esc(c.title)}</b><small>🎤 ${esc(c.singer)}</small></div></div>` : '';
+  html += state.queue.map((s, i) => {
+    const mine = s.uid === uid;
+    return `<div class="card item ${mine ? 'mine' : ''}"><div>
+      ${mine && i === 0 ? '<small class="tag">Você é a próxima!</small>' : ''}
+      <b>${i + 1}. ${esc(s.title)}</b><small>🎤 ${esc(s.singer)}</small></div>
+      ${mine ? `<button data-rm="${esc(s.id)}">Remover</button>` : ''}</div>`;
+  }).join('');
+  $('queue').innerHTML = html || '<p class="msg">A fila está vazia. Busque uma música e seja o primeiro!</p>';
+}
+$('queue').onclick = e => { const id = e.target.dataset.rm; if (id) socket.emit('queue:remove', { songId: id }); };
+</script>
+</body>
+</html>

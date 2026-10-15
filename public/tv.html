@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KARAOKÊ — TV</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="tv">
+<div id="start" class="overlay">
+  <h1 class="neon">KARAOKÊ</h1>
+  <button id="startBtn" autofocus>Iniciar karaokê</button>
+</div>
+
+<div id="standby" class="hidden">
+  <h1 class="neon">KARAOKÊ</h1>
+  <div id="qr"></div>
+  <div class="pin" id="pin"></div>
+  <p>Aponte a câmera do celular para escolher sua música</p>
+  <div id="url"></div>
+</div>
+
+<div id="stage" class="hidden">
+  <div id="playerBox"><div id="player"></div></div>
+  <aside>
+    <h1 class="neon small">KARAOKÊ</h1>
+    <div id="now"></div>
+    <h3>Próximas</h3>
+    <ol id="next"></ol>
+    <div class="mini"><div id="qr2"></div><div><small>Sala</small><br><b id="pin2"></b></div></div>
+    <button id="skip">Pular música</button>
+  </aside>
+</div>
+<div id="toast" class="hidden"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Sala: usa ?room=XXXX ou cria uma nova e grava na URL
+const q = new URLSearchParams(location.search);
+let room = (q.get('room') || '').toUpperCase();
+if (!room) { room = Math.random().toString(36).slice(2, 6).toUpperCase(); history.replaceState(null, '', '?room=' + room); }
+const joinUrl = `${location.origin}/join?room=${room}`;
+$('pin').textContent = $('pin2').textContent = room;
+$('url').textContent = joinUrl;
+new QRCode($('qr'),  { text: joinUrl, width: 280, height: 280 });
+new QRCode($('qr2'), { text: joinUrl, width: 110, height: 110 });
+
+const socket = io();
+socket.on('connect', () => socket.emit('room:join', { roomId: room, name: 'TV', isHost: true }));
+socket.on('state', s => { state = s; render(); });
+const next = () => socket.emit('playback:next');
+$('skip').onclick = next;
+
+let state = { queue: [], current: null }, started = false, lastId = null;
+let player = null, apiReady = false, pending = null;
+
+// YouTube IFrame API
+window.onYouTubeIframeAPIReady = () => { apiReady = true; if (pending) play(pending); };
+const tag = document.createElement('script'); tag.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(tag);
+
+function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3500); }
+
+function play(c) {
+  if (!apiReady) { pending = c; return; }
+  pending = null;
+  if (!player) {
+    player = new YT.Player('player', {
+      width: '100%', height: '100%', videoId: c.videoId,
+      playerVars: { autoplay: 1, rel: 0, playsinline: 1, origin: location.origin },
+      events: {
+        onReady: e => e.target.playVideo(),
+        onStateChange: e => { if (e.data === YT.PlayerState.ENDED) next(); },
+        onError: e => { toast(`Vídeo bloqueado (erro ${e.data}). Pulando...`); next(); },
+      },
+    });
+  } else player.loadVideoById(c.videoId);
+}
+
+function render() {
+  if (!started) return;
+  const c = state.current;
+  $('standby').classList.toggle('hidden', !!c);
+  $('stage').classList.toggle('hidden', !c);
+  if (!c) { lastId = null; if (player && player.stopVideo) player.stopVideo(); return; }
+  if (c.id !== lastId) { lastId = c.id; play(c); }
+  $('now').innerHTML = `<small>Cantando agora</small><b>${esc(c.title)}</b><span>🎤 ${esc(c.singer)}</span>`;
+  $('next').innerHTML = state.queue.slice(0, 5).map(s => `<li>${esc(s.title)}<em>${esc(s.singer)}</em></li>`).join('')
+    || '<li>Fila vazia. Escaneie o QR Code e peça a sua!</li>';
+}
+
+// O clique inicial libera o autoplay com som
+$('startBtn').onclick = () => { started = true; $('start').classList.add('hidden'); render(); if (!state.current) $('standby').classList.remove('hidden'); };
+</script>
+</body>
+</html>

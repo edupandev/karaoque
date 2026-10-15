@@ -44,10 +44,21 @@
     </div>
   </div>
 
+  <div id="tabMic" hidden>
+    <div class="card">
+      <b>Microfone na TV</b>
+      <p class="msg" id="micInfo">Sua voz sai nas caixas da TV. Fale perto do celular e fique longe das caixas para não dar microfonia.</p>
+      <button id="btnMic" class="wide-btn">🎙️ Ativar microfone</button>
+      <label for="micGain">Volume do microfone</label>
+      <input id="micGain" type="range" min="0" max="200" value="100">
+    </div>
+  </div>
+
   <nav>
     <button id="navSearch" class="on">Buscar</button>
     <button id="navQueue">Fila</button>
     <button id="navControl">Controle</button>
+    <button id="navMic">Mic</button>
   </nav>
 </section>
 <div id="toast" class="m hidden"></div>
@@ -74,12 +85,13 @@ $('loginForm').onsubmit = e => {
   socket = io();
   socket.on('connect', () => socket.emit('room:join', { roomId: room, name, uid }));
   socket.on('state', s => { state = s; renderQueue(); renderControl(); });
+  socket.on('mic:signal', onMicSignal);
 };
 
 function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
 
 function tab(which) {
-  ['Search', 'Queue', 'Control'].forEach(n => {
+  ['Search', 'Queue', 'Control', 'Mic'].forEach(n => {
     const on = which === n.toLowerCase();
     $('tab' + n).hidden = !on; $('nav' + n).classList.toggle('on', on);
   });
@@ -87,6 +99,7 @@ function tab(which) {
 $('navSearch').onclick = () => tab('search');
 $('navQueue').onclick = () => tab('queue');
 $('navControl').onclick = () => tab('control');
+$('navMic').onclick = () => tab('mic');
 
 // Busca: link do YouTube entra direto; texto vai para o servidor
 const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
@@ -151,6 +164,53 @@ function renderControl() {
   document.querySelectorAll('#tabControl button').forEach(b => b.disabled = !c);
 }
 renderControl();
+
+// ----- Microfone: sua voz vai direto para a TV (WebRTC) -----
+let micPc = null, micRaw = null, micCtx = null, micGain = null, wake = null;
+function setMic(on, info) {
+  $('btnMic').textContent = on ? '⏹ Desligar microfone' : '🎙️ Ativar microfone';
+  $('btnMic').classList.toggle('live', on);
+  if (info) $('micInfo').textContent = info;
+}
+function stopMic(notify = true) {
+  if (notify && socket) socket.emit('mic:stop');
+  if (micPc) { micPc.close(); micPc = null; }
+  if (micRaw) { micRaw.getTracks().forEach(t => t.stop()); micRaw = null; }
+  if (micCtx) { micCtx.close(); micCtx = null; }
+  if (wake) { wake.release().catch(() => {}); wake = null; }
+  setMic(false);
+}
+async function startMic() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    return setMic(false, 'O microfone só funciona em páginas HTTPS. Abra o endereço https:// do site.');
+  }
+  try {
+    micRaw = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 } });
+  } catch { return setMic(false, 'Permissão negada. Libere o microfone nas configurações do navegador e tente de novo.'); }
+  micCtx = new AudioContext(); await micCtx.resume();
+  const dest = micCtx.createMediaStreamDestination();
+  micGain = micCtx.createGain(); micGain.gain.value = $('micGain').value / 100;
+  micCtx.createMediaStreamSource(micRaw).connect(micGain); micGain.connect(dest);
+  micPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  dest.stream.getAudioTracks().forEach(t => micPc.addTrack(t, dest.stream));
+  micPc.onicecandidate = e => { if (e.candidate) socket.emit('mic:signal', { data: { candidate: e.candidate } }); };
+  micPc.onconnectionstatechange = () => {
+    const st = micPc && micPc.connectionState;
+    if (st === 'connected') setMic(true, 'Ao vivo! Sua voz está saindo na TV.');
+    if (st === 'failed') { stopMic(false); setMic(false, 'Não foi possível conectar com a TV. Confira se ela está aberta e tente de novo.'); }
+  };
+  setMic(true, 'Conectando com a TV...');
+  try { wake = await navigator.wakeLock?.request('screen'); } catch {}
+  await micPc.setLocalDescription(await micPc.createOffer());
+  socket.emit('mic:signal', { data: { description: micPc.localDescription } });
+}
+function onMicSignal({ data }) {
+  if (!micPc || !data) return;
+  if (data.description) micPc.setRemoteDescription(data.description).catch(() => {});
+  if (data.candidate) micPc.addIceCandidate(data.candidate).catch(() => {});
+}
+$('btnMic').onclick = () => (micPc ? stopMic() : startMic());
+$('micGain').oninput = e => { if (micGain) micGain.gain.value = e.target.value / 100; };
 </script>
 </body>
 </html>

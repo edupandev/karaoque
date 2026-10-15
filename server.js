@@ -62,6 +62,7 @@ io.on('connection', socket => {
     socket.data = { roomId, name: String(name || 'Convidado').slice(0, 20), uid: String(uid || socket.id), isHost: !!isHost };
     socket.join(roomId);
     const r = getRoom(roomId);
+    if (socket.data.isHost) r.hostId = socket.id;
     socket.emit('state', stateOf(r));
   });
 
@@ -112,8 +113,26 @@ io.on('connection', socket => {
     publish(roomId);
   });
 
+  // Microfone: o servidor só repassa a negociação WebRTC entre celular e TV (o áudio não passa por aqui)
+  socket.on('mic:signal', ({ to, data } = {}) => {
+    const { roomId, isHost, name } = socket.data || {};
+    if (!roomId || !data) return;
+    const r = getRoom(roomId);
+    if (isHost) { if (to) io.to(to).emit('mic:signal', { data }); }
+    else if (r.hostId) io.to(r.hostId).emit('mic:signal', { from: socket.id, name, data });
+  });
+
+  socket.on('mic:stop', () => {
+    const { roomId, isHost } = socket.data || {};
+    if (!roomId || isHost) return;
+    const r = getRoom(roomId);
+    if (r.hostId) io.to(r.hostId).emit('mic:stop', { from: socket.id });
+  });
+
   socket.on('disconnect', () => {
     const id = socket.data?.roomId;
+    const hostId = id && rooms.get(id)?.hostId;
+    if (hostId) io.to(hostId).emit('mic:stop', { from: socket.id });
     if (id) setTimeout(() => { if (!io.sockets.adapter.rooms.has(id)) rooms.delete(id); }, 10 * 60 * 1000);
   });
 });

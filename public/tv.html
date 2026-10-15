@@ -31,6 +31,7 @@
     <button id="skip">Pular música</button>
   </aside>
 </div>
+<div id="mics"></div>
 <div id="toast" class="hidden"></div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -65,6 +66,34 @@ socket.on('control', ({ action, value }) => {
     player.unMute();
     const v = Math.max(0, Math.min(100, player.getVolume() + value));
     player.setVolume(v); toast('Volume: ' + v + '%');
+  }
+});
+
+// Microfones dos celulares (WebRTC): cada celular conectado vira um <audio> tocando na TV
+const mics = new Map();
+function dropMic(id) {
+  const m = mics.get(id); if (!m) return;
+  try { m.pc.close(); } catch {}
+  m.audio.srcObject = null; m.audio.remove(); m.badge.remove(); mics.delete(id);
+}
+socket.on('mic:stop', ({ from }) => dropMic(from));
+socket.on('mic:signal', ({ from, name, data }) => {
+  let m = mics.get(from);
+  if (data.description) {
+    dropMic(from);
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    const audio = document.createElement('audio'); audio.autoplay = true; document.body.appendChild(audio);
+    const badge = document.createElement('span'); badge.textContent = '🎤 ' + (name || 'Convidado'); $('mics').appendChild(badge);
+    m = { pc, audio, badge }; mics.set(from, m);
+    pc.onicecandidate = e => { if (e.candidate) socket.emit('mic:signal', { to: from, data: { candidate: e.candidate } }); };
+    pc.ontrack = e => { audio.srcObject = e.streams[0]; audio.play().catch(() => {}); };
+    pc.onconnectionstatechange = () => { if (['failed', 'closed'].includes(pc.connectionState)) dropMic(from); };
+    m.ready = pc.setRemoteDescription(data.description)
+      .then(() => pc.createAnswer())
+      .then(a => pc.setLocalDescription(a))
+      .then(() => socket.emit('mic:signal', { to: from, data: { description: pc.localDescription } }));
+  } else if (data.candidate && m) {
+    m.ready.then(() => m.pc.addIceCandidate(data.candidate)).catch(() => {});
   }
 });
 

@@ -113,6 +113,17 @@ io.on('connection', socket => {
     publish(roomId);
   });
 
+  // Reações: emojis dos convidados que sobem pela tela da TV
+  socket.on('reaction:send', ({ type } = {}) => {
+    const { roomId, name } = socket.data || {};
+    if (!roomId || !['clap', 'fire', 'love', 'sing', 'cheers', 'party'].includes(type)) return;
+    const now = Date.now();
+    if (now - (socket.data.lastReaction || 0) < 250) return; // anti-spam
+    socket.data.lastReaction = now;
+    const hostId = getRoom(roomId).hostId;
+    if (hostId) io.to(hostId).emit('reaction', { type, name });
+  });
+
   // Microfone: o servidor só repassa a negociação WebRTC entre celular e TV (o áudio não passa por aqui)
   socket.on('mic:signal', ({ to, data } = {}) => {
     const { roomId, isHost, name } = socket.data || {};

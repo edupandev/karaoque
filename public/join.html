@@ -44,11 +44,37 @@
     </div>
   </div>
 
+  <div id="tabReact" hidden>
+    <div class="card"><b>Anime a festa na TV</b>
+      <div class="react-grid">
+        <button data-react="clap">👏<small>Aplausos</small></button>
+        <button data-react="fire">🔥<small>Pegando fogo</small></button>
+        <button data-react="love">💖<small>Amei</small></button>
+        <button data-react="sing">🎤<small>Solta a voz</small></button>
+        <button data-react="cheers">🍻<small>Tim-tim</small></button>
+        <button data-react="party">🎉<small>Festa</small></button>
+      </div>
+    </div>
+  </div>
+
   <div id="tabMic" hidden>
     <div class="card">
       <b>Microfone na TV</b>
       <p class="msg" id="micInfo">Sua voz sai nas caixas da TV. Fale perto do celular e fique longe das caixas para não dar microfonia.</p>
       <button id="btnMic" class="wide-btn">🎙️ Ativar microfone</button>
+      <label>Efeito na voz</label>
+      <div class="chips">
+        <button class="chip on" data-fx="none">Normal</button>
+        <button class="chip" data-fx="reverb">Reverb</button>
+        <button class="chip" data-fx="echo">Eco</button>
+        <button class="chip" data-fx="robot">Robô</button>
+        <button class="chip" data-fx="radio">Rádio</button>
+      </div>
+      <label for="fxAmount">Intensidade do efeito</label>
+      <input id="fxAmount" type="range" min="0" max="100" value="50">
+      <label class="check"><input type="checkbox" id="nsToggle" checked> Supressão de ruído</label>
+      <label for="gateLevel">Corte de ruído de fundo</label>
+      <input id="gateLevel" type="range" min="0" max="100" value="40">
       <label for="micGain">Volume do microfone</label>
       <input id="micGain" type="range" min="0" max="200" value="100">
     </div>
@@ -59,6 +85,7 @@
     <button id="navQueue">Fila</button>
     <button id="navControl">Controle</button>
     <button id="navMic">Mic</button>
+    <button id="navReact">Reagir</button>
   </nav>
 </section>
 <div id="toast" class="m hidden"></div>
@@ -91,7 +118,7 @@ $('loginForm').onsubmit = e => {
 function toast(t) { const e = $('toast'); e.textContent = t; e.classList.remove('hidden'); setTimeout(() => e.classList.add('hidden'), 3000); }
 
 function tab(which) {
-  ['Search', 'Queue', 'Control', 'Mic'].forEach(n => {
+  ['Search', 'Queue', 'Control', 'Mic', 'React'].forEach(n => {
     const on = which === n.toLowerCase();
     $('tab' + n).hidden = !on; $('nav' + n).classList.toggle('on', on);
   });
@@ -100,6 +127,7 @@ $('navSearch').onclick = () => tab('search');
 $('navQueue').onclick = () => tab('queue');
 $('navControl').onclick = () => tab('control');
 $('navMic').onclick = () => tab('mic');
+$('navReact').onclick = () => tab('react');
 
 // Busca: link do YouTube entra direto; texto vai para o servidor
 const LINK = /(?:youtu\.be\/|[?&]v=|embed\/|shorts\/)([\w-]{11})/;
@@ -140,6 +168,7 @@ function renderQueue() {
   if (!$('queue')) return;
   const c = state.current;
   let html = c ? `<div class="card item"><div><small class="tag">Tocando agora</small><b>${esc(c.title)}</b><small>🎤 ${esc(c.singer)}</small></div></div>` : '';
+  if (c) html += '<button class="wide-btn" style="margin:0 0 12px" data-skip="1">⏭ Próxima música</button>';
   html += state.queue.map((s, i) => {
     const mine = s.uid === uid;
     return `<div class="card item ${mine ? 'mine' : ''}"><div>
@@ -149,7 +178,11 @@ function renderQueue() {
   }).join('');
   $('queue').innerHTML = html || '<p class="msg">A fila está vazia. Busque uma música e seja o primeiro!</p>';
 }
-$('queue').onclick = e => { const id = e.target.dataset.rm; if (id) socket.emit('queue:remove', { songId: id }); };
+$('queue').onclick = e => {
+  const id = e.target.dataset.rm;
+  if (id) socket.emit('queue:remove', { songId: id });
+  if (e.target.dataset.skip && confirm('Pular a música atual?')) send('skip');
+};
 // ----- Controle remoto da TV -----
 const send = (action, value) => socket.emit('playback:control', { action, value });
 $('btnPlay').onclick = () => send(state.playing ? 'pause' : 'play');
@@ -176,6 +209,7 @@ function stopMic(notify = true) {
   if (notify && socket) socket.emit('mic:stop');
   if (micPc) { micPc.close(); micPc = null; }
   if (micRaw) { micRaw.getTracks().forEach(t => t.stop()); micRaw = null; }
+  clearInterval(gateTimer); gateTimer = null;
   if (micCtx) { micCtx.close(); micCtx = null; }
   if (wake) { wake.release().catch(() => {}); wake = null; }
   setMic(false);
@@ -185,12 +219,11 @@ async function startMic() {
     return setMic(false, 'O microfone só funciona em páginas HTTPS. Abra o endereço https:// do site.');
   }
   try {
-    micRaw = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1 } });
+    micRaw = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: $('nsToggle').checked, autoGainControl: false, channelCount: 1 } });
   } catch { return setMic(false, 'Permissão negada. Libere o microfone nas configurações do navegador e tente de novo.'); }
   micCtx = new AudioContext(); await micCtx.resume();
   const dest = micCtx.createMediaStreamDestination();
-  micGain = micCtx.createGain(); micGain.gain.value = $('micGain').value / 100;
-  micCtx.createMediaStreamSource(micRaw).connect(micGain); micGain.connect(dest);
+  buildGraph(dest);
   micPc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   dest.stream.getAudioTracks().forEach(t => micPc.addTrack(t, dest.stream));
   micPc.onicecandidate = e => { if (e.candidate) socket.emit('mic:signal', { data: { candidate: e.candidate } }); };
@@ -209,8 +242,82 @@ function onMicSignal({ data }) {
   if (data.description) micPc.setRemoteDescription(data.description).catch(() => {});
   if (data.candidate) micPc.addIceCandidate(data.candidate).catch(() => {});
 }
+// Cadeia: microfone > filtro de graves > porta de ruído > (seco + efeito) > volume > TV
+let fx = 'none', gateTimer = null, graph = {};
+function makeIR(c) {
+  const len = c.sampleRate * 2.2, buf = c.createBuffer(2, len, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5); }
+  return buf;
+}
+function buildGraph(dest) {
+  const c = micCtx;
+  const src = c.createMediaStreamSource(micRaw);
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+  const an = c.createAnalyser(); an.fftSize = 1024;
+  const gate = c.createGain(), dry = c.createGain(), wetIn = c.createGain(), wet = c.createGain();
+  micGain = c.createGain(); micGain.gain.value = $('micGain').value / 100;
+  src.connect(hp); hp.connect(an); hp.connect(gate);
+  gate.connect(dry); gate.connect(wetIn);
+  dry.connect(micGain); wet.connect(micGain); micGain.connect(dest);
+  graph = { c, an, gate, dry, wetIn, wet, nodes: [] };
+  setEffect(fx); startGate();
+}
+function applyMix() {
+  if (!micCtx) return;
+  const amt = $('fxAmount').value / 100, crossfade = fx === 'robot' || fx === 'radio';
+  graph.wet.gain.value = fx === 'none' ? 0 : amt * (fx === 'reverb' ? 1.6 : 1);
+  graph.dry.gain.value = crossfade ? 1 - amt : 1;
+}
+function setEffect(name) {
+  fx = name;
+  document.querySelectorAll('.chip').forEach(b => b.classList.toggle('on', b.dataset.fx === name));
+  if (!micCtx) return;
+  const { c, wetIn, wet } = graph;
+  wetIn.disconnect();
+  graph.nodes.forEach(n => { try { n.disconnect(); if (n.stop) n.stop(); } catch {} });
+  graph.nodes = [];
+  let out = null;
+  if (name === 'reverb') {
+    const cv = c.createConvolver(); cv.buffer = makeIR(c); wetIn.connect(cv); out = cv; graph.nodes.push(cv);
+  } else if (name === 'echo') {
+    const d = c.createDelay(1), fb = c.createGain(); d.delayTime.value = 0.3; fb.gain.value = 0.4;
+    wetIn.connect(d); d.connect(fb); fb.connect(d); out = d; graph.nodes.push(d, fb);
+  } else if (name === 'robot') {
+    const m = c.createGain(), o = c.createOscillator(); m.gain.value = 0; o.frequency.value = 55;
+    o.connect(m.gain); o.start(); wetIn.connect(m); out = m; graph.nodes.push(m, o);
+  } else if (name === 'radio') {
+    const h = c.createBiquadFilter(), l = c.createBiquadFilter(); h.type = 'highpass'; h.frequency.value = 500; l.type = 'lowpass'; l.frequency.value = 3200;
+    wetIn.connect(h); h.connect(l); out = l; graph.nodes.push(h, l);
+  }
+  if (out) out.connect(wet);
+  applyMix();
+}
+// Porta de ruído: silencia o microfone quando só há barulho de fundo (e reduz o eco da música)
+function startGate() {
+  const buf = new Float32Array(graph.an.fftSize); let lastLoud = 0;
+  gateTimer = setInterval(() => {
+    const { gate, an, c } = graph;
+    if (!$('nsToggle').checked) return gate.gain.setTargetAtTime(1, c.currentTime, 0.02);
+    an.getFloatTimeDomainData(buf);
+    let s = 0; for (const v of buf) s += v * v;
+    const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-9);
+    const limit = -70 + $('gateLevel').value * 0.4;
+    const now = performance.now();
+    if (db > limit) lastLoud = now;
+    const open = now - lastLoud < 250;
+    gate.gain.setTargetAtTime(open ? 1 : 0, c.currentTime, open ? 0.01 : 0.1);
+  }, 40);
+}
+document.querySelectorAll('.chip').forEach(b => b.onclick = () => setEffect(b.dataset.fx));
+$('fxAmount').oninput = applyMix;
+$('nsToggle').onchange = e => {
+  const t = micRaw && micRaw.getAudioTracks()[0];
+  if (t) t.applyConstraints({ noiseSuppression: e.target.checked, echoCancellation: true }).catch(() => {});
+};
 $('btnMic').onclick = () => (micPc ? stopMic() : startMic());
 $('micGain').oninput = e => { if (micGain) micGain.gain.value = e.target.value / 100; };
+// ----- Reações -----
+document.querySelectorAll('[data-react]').forEach(b => b.onclick = () => socket.emit('reaction:send', { type: b.dataset.react }));
 </script>
 </body>
 </html>

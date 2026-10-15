@@ -75,3 +75,22 @@ nav button.on{color:#00e5ff;box-shadow:inset 0 3px #00e5ff}
 .wide-btn{width:100%;margin-top:12px;padding:20px;font-size:20px}
 button.live{background:#ff2bd6;color:#fff}
 input[type=range]{padding:0}
+
+/* Efeitos de voz */
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}
+.chip{background:#0f0a20;color:#9a8fb8;border:1px solid #3a2a63;padding:.5em 1em}
+.chip.on{background:linear-gradient(90deg,#00e5ff,#ff2bd6);color:#0a0614;border-color:transparent}
+.check{display:flex;align-items:center;gap:10px;color:#fff;font-size:16px}
+.check input{width:22px;height:22px;padding:0}
+
+/* Reações */
+#reactions{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:7}
+.float{position:absolute;bottom:-12vh;display:flex;flex-direction:column;align-items:center;animation:rise 3.2s ease-out forwards;will-change:transform,opacity}
+.float span{font-size:6vw;line-height:1}
+.float small{font-size:1.3vw;background:#0a0614;padding:.2vh .8vw;border-radius:99px;color:#fff}
+@keyframes rise{0%{transform:translateY(0);opacity:1}80%{opacity:1}100%{transform:translateY(-105vh);opacity:0}}
+.react-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.react-grid button{padding:18px 4px;font-size:34px;line-height:1;display:flex;flex-direction:column;align-items:center;gap:6px;background:#17102b;border:1px solid #3a2a63;color:#fff}
+.react-grid small{font-size:12px;color:#9a8fb8}
+.react-grid button:active{transform:scale(.94)}
+nav button{padding:16px 4px;font-size:14px}

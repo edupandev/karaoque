@@ -31,6 +31,7 @@
     <button id="skip">Pular música</button>
   </aside>
 </div>
+<div id="reactions"></div>
 <div id="mics"></div>
 <div id="toast" class="hidden"></div>
 
@@ -67,6 +68,21 @@ socket.on('control', ({ action, value }) => {
     const v = Math.max(0, Math.min(100, player.getVolume() + value));
     player.setVolume(v); toast('Volume: ' + v + '%');
   }
+});
+
+// Reações dos celulares: emojis que sobem pela tela
+const EMOJI = { clap: '👏', fire: '🔥', love: '💖', sing: '🎤', cheers: '🍻', party: '🎉' };
+socket.on('reaction', ({ type, name }) => {
+  if (!EMOJI[type]) return;
+  const box = $('reactions');
+  while (box.children.length >= 24) box.firstChild.remove();
+  const el = document.createElement('div');
+  el.className = 'float';
+  el.style.left = (4 + Math.random() * 90) + 'vw';
+  el.style.animationDuration = (2.8 + Math.random() * 1.4) + 's';
+  el.innerHTML = `<span>${EMOJI[type]}</span><small>${esc(name || '')}</small>`;
+  el.onanimationend = () => el.remove();
+  box.appendChild(el);
 });
 
 // Microfones dos celulares (WebRTC): cada celular conectado vira um <audio> tocando na TV
